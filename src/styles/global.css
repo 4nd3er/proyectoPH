@@ -1,0 +1,134 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─────────────────────────────────────────────────────────────────
+   BASE — resets & body-level styles that Tailwind @layer base
+   doesn't cover (grain overlay, scrollbar, smooth scroll)
+───────────────────────────────────────────────────────────────── */
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  /* Noise grain overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 9999;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+    opacity: 0.5;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar       { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #1b2535; border-radius: 3px; }
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   COMPONENTS — classes used inside JS-generated HTML (innerHTML),
+   which Tailwind cannot scan and tree-shake at build time.
+   All rules use @apply so we keep a single source of truth.
+───────────────────────────────────────────────────────────────── */
+@layer components {
+
+  /* ── Connection badge states ─────────────────────────────────── */
+  .badge-base {
+    @apply inline-flex items-center gap-1.5 text-[0.7rem] font-mono
+           px-3 py-1 rounded-full transition-all duration-300;
+  }
+  .badge-base::before {
+    content: '';
+    @apply w-1.5 h-1.5 rounded-full bg-current animate-pulse-dot-fast;
+  }
+  .badge-disconnected {
+    @apply bg-red-500/[.12] text-red-400 border border-red-500/30;
+  }
+  .badge-connected {
+    @apply bg-ok/[.12] text-ok border border-ok/30;
+  }
+
+  /* ── Sensor card ─────────────────────────────────────────────── */
+  .sensor-card {
+    @apply bg-surface border border-dark rounded-2xl p-6
+           flex flex-col gap-4 relative overflow-hidden
+           transition-[border-color,box-shadow] duration-300;
+    animation: fadeUp 0.5s ease both;
+  }
+  /* Accent top stripe — uses CSS custom prop set inline by JS */
+  .sensor-card::before {
+    content: '';
+    @apply absolute top-0 left-0 right-0 h-[2px] opacity-80;
+    background: linear-gradient(90deg, var(--card-color, #00e5ff), transparent);
+  }
+  .sensor-card:hover {
+    border-color: var(--card-color, #00e5ff);
+    box-shadow: 0 0 30px rgba(0, 229, 255, 0.06);
+  }
+
+  /* ── Card internals ─────────────────────────────────────────── */
+  .card-header {
+    @apply flex items-start justify-between;
+  }
+  .sensor-id {
+    @apply font-display text-[1.1rem] font-bold tracking-[-0.02em] capitalize;
+  }
+  .sensor-meta {
+    @apply flex flex-wrap gap-1.5 mt-1;
+  }
+  .meta-tag {
+    @apply text-[0.6rem] px-2 py-0.5
+           bg-white/[.05] border border-dark rounded-full
+           text-muted uppercase tracking-[0.07em];
+  }
+  .latest-value {
+    @apply flex flex-col items-end;
+  }
+  .latest-value .num {
+    @apply font-display text-[1.8rem] font-extrabold leading-none;
+    color: var(--card-color, #00e5ff);
+  }
+  .latest-value .unit {
+    @apply text-[0.65rem] text-muted uppercase tracking-[0.1em];
+  }
+
+  /* ── Chart & table wrappers ─────────────────────────────────── */
+  .chart-wrapper {
+    @apply relative h-[180px];
+  }
+  .data-table-wrapper {
+    @apply max-h-[140px] overflow-y-auto;
+    scrollbar-width: thin;
+    scrollbar-color: #1b2535 transparent;
+  }
+
+  /* ── Data table ─────────────────────────────────────────────── */
+  .data-table-wrapper table {
+    @apply w-full border-collapse text-[0.7rem];
+  }
+  .data-table-wrapper thead th {
+    @apply text-left px-2.5 py-1.5 text-muted uppercase tracking-[0.08em]
+           border-b border-dark sticky top-0 bg-surface;
+  }
+  .data-table-wrapper tbody tr {
+    @apply transition-colors duration-150;
+  }
+  .data-table-wrapper tbody tr:hover {
+    @apply bg-white/[.03];
+  }
+  .data-table-wrapper tbody td {
+    @apply px-2.5 py-[0.35rem] border-b border-dark/50 text-[#e2e8f0];
+  }
+  .data-table-wrapper tbody td:first-child {
+    @apply text-muted;
+  }
+
+  /* ── Error state (injected by JS) ───────────────────────────── */
+  #error-state {
+    @apply col-span-full flex flex-col items-center justify-center
+           gap-4 py-20 px-8 text-red-400 text-sm;
+  }
+}
