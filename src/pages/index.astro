@@ -1,0 +1,387 @@
+---
+// src/pages/index.astro
+// Dashboard de sensores — lee /sensores desde Firebase Realtime
+// Database y renderiza una gráfica en tiempo real por sensor.
+// Las variables PUBLIC_* de .env quedan incrustadas en el bundle
+// en tiempo de build y se pasan al script vía data attributes.
+
+const fbConfig = {
+  apiKey:            import.meta.env.PUBLIC_FIREBASE_API_KEY            ?? "",
+  authDomain:        import.meta.env.PUBLIC_FIREBASE_AUTH_DOMAIN        ?? "",
+  databaseURL:       import.meta.env.PUBLIC_FIREBASE_DATABASE_URL       ?? "",
+  projectId:         import.meta.env.PUBLIC_FIREBASE_PROJECT_ID         ?? "",
+  storageBucket:     import.meta.env.PUBLIC_FIREBASE_STORAGE_BUCKET     ?? "",
+  messagingSenderId: import.meta.env.PUBLIC_FIREBASE_MESSAGING_SENDER_ID ?? "",
+  appId:             import.meta.env.PUBLIC_FIREBASE_APP_ID             ?? "",
+};
+const sensorsPath = import.meta.env.PUBLIC_SENSORS_PATH ?? "sensores";
+---
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SensorDB — Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+
+  <style>
+    :root {
+      --bg:        #070b12;
+      --surface:   #0d1420;
+      --border:    #1b2535;
+      --accent:    #00e5ff;
+      --text:      #e2e8f0;
+      --muted:     #64748b;
+      --danger:    #ef4444;
+      --ok:        #22c55e;
+      --radius:    12px;
+      --radius-lg: 20px;
+      --font-head: 'Syne', sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      background: var(--bg); color: var(--text);
+      font-family: var(--font-mono); min-height: 100vh; overflow-x: hidden;
+    }
+    body::before {
+      content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 9999;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+      opacity: .5;
+    }
+    /* Header */
+    header {
+      position: sticky; top: 0; z-index: 100;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 1rem 2.5rem;
+      background: rgba(7,11,18,0.85); backdrop-filter: blur(18px);
+      border-bottom: 1px solid var(--border);
+    }
+    .logo {
+      font-family: var(--font-head); font-size: 1.25rem; font-weight: 800;
+      letter-spacing: -0.02em; display: flex; align-items: center; gap: .6rem;
+    }
+    .logo-dot {
+      width: 10px; height: 10px; background: var(--accent);
+      border-radius: 50%; box-shadow: 0 0 12px var(--accent);
+      animation: pulse 2s ease-in-out infinite;
+    }
+    .header-meta { font-size: .7rem; color: var(--muted); text-align: right; line-height: 1.8; }
+    #connection-badge {
+      display: inline-flex; align-items: center; gap: .4rem;
+      font-size: .7rem; padding: .25rem .75rem; border-radius: 999px;
+      background: rgba(239,68,68,.12); color: var(--danger);
+      border: 1px solid rgba(239,68,68,.3); transition: all .4s;
+    }
+    #connection-badge.connected {
+      background: rgba(34,197,94,.12); color: var(--ok);
+      border-color: rgba(34,197,94,.3);
+    }
+    #connection-badge::before {
+      content: ''; width: 6px; height: 6px; border-radius: 50%;
+      background: currentColor; animation: pulse 1.5s ease-in-out infinite;
+    }
+    /* Layout */
+    main { padding: 2.5rem 2.5rem 4rem; max-width: 1600px; margin: 0 auto; }
+    .hero { margin-bottom: 3rem; animation: fadeUp .6s ease both; }
+    .hero h1 {
+      font-family: var(--font-head); font-size: clamp(2rem,5vw,3.5rem);
+      font-weight: 800; letter-spacing: -.03em; line-height: 1.1;
+      background: linear-gradient(135deg, var(--text) 40%, var(--accent));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text; margin-bottom: .5rem;
+    }
+    .hero p { font-size: .8rem; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; }
+    /* Stats bar */
+    .stats-bar { display: flex; gap: 1rem; margin-bottom: 2.5rem; flex-wrap: wrap; animation: fadeUp .6s .1s ease both; }
+    .stat-chip {
+      display: flex; flex-direction: column; padding: .9rem 1.4rem;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); min-width: 140px; gap: .25rem; transition: border-color .2s;
+    }
+    .stat-chip:hover { border-color: var(--accent); }
+    .stat-chip .label { font-size: .65rem; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
+    .stat-chip .value { font-size: 1.5rem; font-family: var(--font-head); font-weight: 700; color: var(--accent); }
+    /* Grid */
+    #sensors-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(460px,1fr)); gap: 1.5rem; }
+    /* Sensor card */
+    .sensor-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); padding: 1.5rem;
+      display: flex; flex-direction: column; gap: 1rem;
+      position: relative; overflow: hidden;
+      animation: fadeUp .5s ease both; transition: border-color .3s, box-shadow .3s;
+    }
+    .sensor-card::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+      background: linear-gradient(90deg, var(--card-color, var(--accent)), transparent); opacity: .8;
+    }
+    .sensor-card:hover { border-color: var(--card-color, var(--accent)); box-shadow: 0 0 30px rgba(0,229,255,.06); }
+    .card-header { display: flex; align-items: flex-start; justify-content: space-between; }
+    .sensor-id { font-family: var(--font-head); font-size: 1.1rem; font-weight: 700; letter-spacing: -.02em; text-transform: capitalize; }
+    .sensor-meta { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .3rem; }
+    .meta-tag {
+      font-size: .6rem; padding: .2rem .6rem;
+      background: rgba(255,255,255,.05); border: 1px solid var(--border);
+      border-radius: 999px; color: var(--muted); text-transform: uppercase; letter-spacing: .07em;
+    }
+    .latest-value { display: flex; flex-direction: column; align-items: flex-end; }
+    .latest-value .num { font-family: var(--font-head); font-size: 1.8rem; font-weight: 800; color: var(--card-color, var(--accent)); line-height: 1; }
+    .latest-value .unit { font-size: .65rem; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; }
+    .chart-wrapper { position: relative; height: 180px; }
+    canvas { display: block; }
+    .data-table-wrapper { max-height: 140px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+    table { width: 100%; border-collapse: collapse; font-size: .7rem; }
+    thead th { text-align: left; padding: .4rem .6rem; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--surface); }
+    tbody tr { transition: background .15s; }
+    tbody tr:hover { background: rgba(255,255,255,.03); }
+    tbody td { padding: .35rem .6rem; border-bottom: 1px solid rgba(27,37,53,.5); color: var(--text); }
+    tbody td:first-child { color: var(--muted); }
+    /* States */
+    #loading-state, #error-state {
+      grid-column: 1/-1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 1rem;
+      padding: 5rem 2rem; color: var(--muted); font-size: .85rem;
+    }
+    .spinner { width: 40px; height: 40px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #error-state { color: var(--danger); }
+    /* Animations */
+    @keyframes fadeUp { from { opacity:0; transform:translateY(16px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes pulse { 0%,100% { opacity:1; transform:scale(1); } 50% { opacity:.5; transform:scale(.7); } }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    @media (max-width:640px) {
+      header { padding: 1rem 1.25rem; }
+      main   { padding: 1.5rem 1.25rem 3rem; }
+      #sensors-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Config bridge: Astro sustituye las vars en build time -->
+  <div id="__cfg__"
+    data-api-key={fbConfig.apiKey}
+    data-auth-domain={fbConfig.authDomain}
+    data-database-url={fbConfig.databaseURL}
+    data-project-id={fbConfig.projectId}
+    data-storage-bucket={fbConfig.storageBucket}
+    data-messaging-sender-id={fbConfig.messagingSenderId}
+    data-app-id={fbConfig.appId}
+    data-sensors-path={sensorsPath}
+    style="display:none"
+  ></div>
+
+  <header>
+    <div class="logo"><span class="logo-dot"></span>SensorDB</div>
+    <div class="header-meta">
+      <div id="connection-badge">Desconectado</div>
+      <div id="last-update" style="margin-top:.35rem">—</div>
+    </div>
+  </header>
+
+  <main>
+    <div class="hero">
+      <h1>Monitor de Sensores</h1>
+      <p>Firebase Realtime Database &middot; Actualización en vivo</p>
+    </div>
+    <div class="stats-bar">
+      <div class="stat-chip"><span class="label">Sensores activos</span><span class="value" id="stat-sensors">—</span></div>
+      <div class="stat-chip"><span class="label">Total lecturas</span><span class="value" id="stat-readings">—</span></div>
+      <div class="stat-chip"><span class="label">Última lectura</span><span class="value" id="stat-last" style="font-size:1rem">—</span></div>
+    </div>
+    <div id="sensors-grid">
+      <div id="loading-state"><div class="spinner"></div><span>Conectando con Firebase…</span></div>
+    </div>
+  </main>
+
+  <script type="module">
+    import { initializeApp, getApps }
+      from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js';
+    import { getDatabase, ref, onValue }
+      from 'https://www.gstatic.com/firebasejs/11.0.1/firebase-database.js';
+    import Chart from 'https://cdn.jsdelivr.net/npm/chart.js@4.4.7/auto/+esm';
+
+    // Leer config inyectada por Astro en tiempo de build
+    const ds = document.getElementById('__cfg__').dataset;
+    const app = getApps().length ? getApps()[0] : initializeApp({
+      apiKey:            ds.apiKey,
+      authDomain:        ds.authDomain,
+      databaseURL:       ds.databaseUrl,
+      projectId:         ds.projectId,
+      storageBucket:     ds.storageBucket,
+      messagingSenderId: ds.messagingSenderId,
+      appId:             ds.appId,
+    });
+    const db = getDatabase(app);
+    const SENSORS_PATH = ds.sensorsPath || 'sensores';
+
+    const PALETTE = ['#00e5ff','#7c3aed','#f59e0b','#22c55e','#ec4899','#f97316','#06b6d4','#a855f7'];
+    Chart.defaults.color = '#64748b';
+    Chart.defaults.borderColor = '#1b2535';
+    Chart.defaults.font.family = "'JetBrains Mono', monospace";
+    Chart.defaults.font.size = 11;
+
+    const instances = {};
+    let totalReadings = 0;
+
+    function toMs(raw) {
+      if (!raw) return Date.now();
+      const n = Number(raw);
+      if (!isNaN(n)) return n > 1e12 ? n : n * 1000;
+      const p = Date.parse(raw);
+      return isNaN(p) ? Date.now() : p;
+    }
+    const fmtTime = r => new Date(toMs(r)).toLocaleTimeString('es-CO', { hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit' });
+    const fmtFull = r => new Date(toMs(r)).toLocaleString('es-CO', { hour12:false });
+
+    function normalize(raw) {
+      if (raw == null) return [];
+      if (typeof raw !== 'object') return [{ ts: Date.now(), valor: +raw, unidad: '' }];
+      if (Array.isArray(raw)) return raw.filter(Boolean).map((x,i) => ({
+        ts: x.timestamp ?? x.ts ?? x.time ?? i,
+        valor: +(x.valor ?? x.value ?? x.data ?? x.reading ?? 0),
+        unidad: x.unidad ?? x.unit ?? '',
+      }));
+      const keys = Object.keys(raw);
+      if (keys.length <= 2 && ('valor' in raw || 'value' in raw))
+        return [{ ts: raw.timestamp ?? raw.ts ?? Date.now(), valor: +(raw.valor ?? raw.value ?? 0), unidad: raw.unidad ?? raw.unit ?? '' }];
+      if (keys.every(k => typeof raw[k] !== 'object' || raw[k] === null))
+        return keys.map(k => ({ ts: k, valor: +raw[k], unidad: '' }));
+      return keys.map(k => {
+        const x = raw[k];
+        if (typeof x !== 'object') return { ts: k, valor: +x, unidad: '' };
+        return {
+          ts: x.timestamp ?? x.ts ?? x.time ?? k,
+          valor: +(x.valor ?? x.value ?? x.data ?? x.reading ?? Object.values(x).find(v => typeof v === 'number') ?? 0),
+          unidad: x.unidad ?? x.unit ?? x.tipo ?? '',
+        };
+      });
+    }
+
+    function splitObj(obj) {
+      if (!obj || typeof obj !== 'object') return { dataNode: obj, meta: {} };
+      const DATA = new Set(['datos','data','lecturas','readings','values','history']);
+      const meta = {};
+      let dataNode = null;
+      for (const [k,v] of Object.entries(obj)) {
+        if (DATA.has(k)) dataNode = v;
+        else if (typeof v !== 'object') meta[k] = v;
+      }
+      return { dataNode: dataNode ?? obj, meta };
+    }
+
+    const buildRows = rows => [...rows].reverse().slice(0,30).map(r =>
+      `<tr><td>${fmtFull(r.ts)}</td><td style="font-weight:500;color:var(--text)">${r.valor}</td><td>${r.unidad||'—'}</td></tr>`
+    ).join('');
+
+    function upsertCard(id, sensorData, idx) {
+      const color = PALETTE[idx % PALETTE.length];
+      const { dataNode, meta } = splitObj(sensorData);
+      const allRows = normalize(dataNode).sort((a,b) => toMs(a.ts) - toMs(b.ts));
+      const rows = allRows.slice(-50);
+
+      if (instances[id]) {
+        const { chart, tbodyEl } = instances[id];
+        chart.data.labels = rows.map(r => fmtTime(r.ts));
+        chart.data.datasets[0].data = rows.map(r => r.valor);
+        chart.update('active');
+        tbodyEl.innerHTML = buildRows(rows);
+        const el = document.getElementById(`latest-${id}`);
+        if (el) el.textContent = rows.at(-1)?.valor ?? '—';
+        document.getElementById('stat-last').textContent = fmtTime(rows.at(-1)?.ts);
+        return;
+      }
+
+      const grid = document.getElementById('sensors-grid');
+      const unit = rows.find(r => r.unidad)?.unidad ?? '';
+      const card = document.createElement('div');
+      card.className = 'sensor-card';
+      card.id = `card-${id}`;
+      card.style.setProperty('--card-color', color);
+      card.style.animationDelay = `${idx * 0.07}s`;
+      const metaHtml = Object.entries(meta).map(([k,v]) => `<span class="meta-tag">${k}: ${v}</span>`).join('') || '<span class="meta-tag">sin metadatos</span>';
+      card.innerHTML = `
+        <div class="card-header">
+          <div>
+            <div class="sensor-id">${id.replace(/_/g,' ')}</div>
+            <div class="sensor-meta">${metaHtml}</div>
+          </div>
+          <div class="latest-value">
+            <span class="num" id="latest-${id}">${rows.at(-1)?.valor ?? '—'}</span>
+            <span class="unit" id="unit-${id}">${unit}</span>
+          </div>
+        </div>
+        <div class="chart-wrapper"><canvas id="chart-${id}"></canvas></div>
+        <div class="data-table-wrapper">
+          <table>
+            <thead><tr><th>Timestamp</th><th>Valor</th><th>Unidad</th></tr></thead>
+            <tbody id="tbody-${id}">${buildRows(rows)}</tbody>
+          </table>
+        </div>`;
+      grid.appendChild(card);
+
+      const chart = new Chart(document.getElementById(`chart-${id}`), {
+        type: 'line',
+        data: {
+          labels: rows.map(r => fmtTime(r.ts)),
+          datasets: [{
+            label: id,
+            data: rows.map(r => r.valor),
+            borderColor: color, backgroundColor: color+'18',
+            borderWidth: 2, pointRadius: rows.length>20?0:3, pointHoverRadius: 5,
+            pointBackgroundColor: color, fill: true, tension: 0.4,
+          }],
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          interaction: { mode:'index', intersect:false }, animation: { duration:400 },
+          plugins: {
+            legend: { display:false },
+            tooltip: {
+              backgroundColor:'#0d1420', borderColor:color, borderWidth:1,
+              titleColor:color, bodyColor:'#e2e8f0', padding:10,
+              callbacks: { label: c => ` ${c.parsed.y}${unit?' '+unit:''}` },
+            },
+          },
+          scales: {
+            x: { grid:{ color:'#1b2535' }, ticks:{ maxRotation:0, maxTicksLimit:6 } },
+            y: { grid:{ color:'#1b2535' }, ticks:{ callback: v => unit?`${v} ${unit}`:v } },
+          },
+        },
+      });
+
+      instances[id] = { chart, tbodyEl: document.getElementById(`tbody-${id}`) };
+      totalReadings += allRows.length;
+      document.getElementById('stat-readings').textContent = totalReadings.toLocaleString('es-CO');
+      document.getElementById('stat-last').textContent = fmtTime(rows.at(-1)?.ts);
+    }
+
+    onValue(ref(db, SENSORS_PATH), snap => {
+      document.getElementById('loading-state')?.remove();
+      const badge = document.getElementById('connection-badge');
+      badge.textContent = 'Conectado'; badge.className = 'connected';
+      document.getElementById('last-update').textContent = new Date().toLocaleTimeString('es-CO', { hour12:false });
+
+      const data = snap.val();
+      if (!data) {
+        document.getElementById('sensors-grid').innerHTML =
+          `<div id="error-state">Sin datos en <code>${SENSORS_PATH}</code></div>`;
+        return;
+      }
+      totalReadings = 0;
+      const ids = Object.keys(data);
+      document.getElementById('stat-sensors').textContent = ids.length;
+      ids.forEach((id, i) => upsertCard(id, data[id], i));
+    }, err => {
+      document.getElementById('sensors-grid').innerHTML =
+        `<div id="error-state"><strong>Error de conexión</strong><span>${err.message}</span></div>`;
+    });
+  </script>
+</body>
+</html>
